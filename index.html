@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>AirKeys — play piano in thin air</title>
+<meta name="description" content="A piano-tiles rhythm game you play with your bare hands, tracked by your camera." />
+<link rel="stylesheet" href="styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🎹</text></svg>" />
+</head>
+<body>
+
+<canvas id="stage"></canvas>
+
+<!-- ── MENU ─────────────────────────────────────────────────────── -->
+<section id="screen-menu" class="screen">
+  <div class="menu-inner">
+    <header class="brand">
+      <h1>AIR<span>KEYS</span></h1>
+      <p class="tagline">play the falling notes with your bare hands — your camera is the instrument</p>
+    </header>
+
+    <div id="genres" class="chips"></div>
+    <div id="songs" class="grid"></div>
+
+    <footer class="menu-foot">
+      <button id="btn-freeplay" class="btn glow">🎹 Free Play — air piano</button>
+      <button id="btn-howto" class="btn ghost">How to play</button>
+      <button id="btn-settings" class="btn ghost">⚙ Settings</button>
+    </footer>
+  </div>
+</section>
+
+<!-- ── WARMUP ───────────────────────────────────────────────────── -->
+<section id="screen-warmup" class="screen hidden">
+  <div class="warm-card">
+    <div id="warmup-icon" class="warm-icon">🖐️</div>
+    <h2 id="warmup-msg">Show your hands to the camera</h2>
+    <p id="warmup-detail" class="dim"></p>
+    <p class="dim small">Sit about an arm's length away. Good light helps. Your camera never leaves this device.</p>
+    <button id="warmup-cancel" class="btn ghost">Cancel</button>
+  </div>
+</section>
+
+<!-- ── GAME HUD ─────────────────────────────────────────────────── -->
+<div id="hud" class="hidden">
+  <div id="progress"><i></i></div>
+  <div class="hud-row">
+    <span id="hud-title"></span>
+    <span class="hud-right">
+      <span id="hud-acc">100.0%</span>
+      <span id="hud-score">0</span>
+      <button id="btn-pause" title="pause (Esc)">⏸</button>
+    </span>
+  </div>
+  <div id="combo"></div>
+  <div id="judge"></div>
+</div>
+
+<div id="free-hud" class="hidden">
+  <div class="hud-row">
+    <span id="hud-free-title">Free Play — air piano</span>
+    <span class="hud-right">
+      <span id="free-note" class="free-note"></span>
+      <button id="free-exit" class="btn ghost small-btn">✕ exit</button>
+    </span>
+  </div>
+</div>
+
+<!-- ── PAUSE ────────────────────────────────────────────────────── -->
+<div id="pause-overlay" class="overlay hidden">
+  <div class="panel">
+    <h2>Paused</h2>
+    <p id="pause-reason" class="dim"></p>
+    <div class="btn-col">
+      <button id="pause-resume" class="btn glow">▶ Resume</button>
+      <button id="pause-restart" class="btn">↺ Restart song</button>
+      <button id="pause-quit" class="btn ghost">Back to songs</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── RESULTS ──────────────────────────────────────────────────── -->
+<section id="screen-results" class="screen hidden">
+  <div class="panel results">
+    <p id="res-song" class="dim"></p>
+    <div id="res-grade">S</div>
+    <div id="res-best" class="best-pill hidden">★ NEW BEST</div>
+    <div class="res-stats">
+      <div><label>score</label><span id="res-score">0</span></div>
+      <div><label>accuracy</label><span id="res-acc">0%</span></div>
+      <div><label>max combo</label><span id="res-combo">0×</span></div>
+    </div>
+    <div id="res-counts" class="res-counts"></div>
+    <div class="btn-col">
+      <button id="res-replay" class="btn glow">↺ Play again</button>
+      <button id="res-next" class="btn">Next song →</button>
+      <button id="res-menu" class="btn ghost">Back to songs</button>
+    </div>
+  </div>
+</section>
+
+<!-- ── SETTINGS ─────────────────────────────────────────────────── -->
+<div id="settings" class="overlay hidden">
+  <div class="panel wide">
+    <h2>Settings</h2>
+    <div id="settings-body"></div>
+    <button id="settings-close" class="btn glow">Done</button>
+  </div>
+</div>
+
+<!-- ── HOW TO PLAY ──────────────────────────────────────────────── -->
+<div id="howto" class="overlay hidden">
+  <div class="panel wide">
+    <h2>How to play</h2>
+    <div class="howto-body">
+      <p>🖐️ <b>Show your hands</b> to the camera. Glowing dots appear on your fingertips — gold for one hand, blue for the other.</p>
+      <p>🎵 <b>Notes fall down the lanes.</b> When a tile reaches the glowing line above the piano, <b>flick a fingertip down</b> in that lane — like tapping an invisible key in the air.</p>
+      <p>🎹 <b>Lanes follow the melody:</b> low notes drift left, high notes right — your hands literally trace the tune. Any of your ten fingers works, and chords need two at once.</p>
+      <p>💪 <b>Strike harder, play louder.</b> Flick speed controls the volume of your note, like a real piano. The game plays the accompaniment underneath you — the golden rain.</p>
+      <p>✨ <b>Perfect</b> hits come from clean flicks right on the line. Resting a finger on a tile as it crosses still counts (assist), but caps at <b>Great</b>.</p>
+      <p>👆 No camera? Touch mode lets you tap the lanes or use <b>D F J K</b> (or <b>1–6</b>).</p>
+    </div>
+    <button id="howto-close" class="btn glow">Got it</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
