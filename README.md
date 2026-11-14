@@ -56,3 +56,29 @@ audio files, so the whole game (minus the 8 MB vision model) is ~60 KB.
 - **Web Audio piano** — layered inharmonic partials, hammer noise, key-tracked decay, convolution hall
 - **Canvas 2D with pre-baked sprites** (tiles, keybed, glows) — the frame loop is pure `drawImage`, no per-frame gradients on the hot path
 - Tiles are lane-mapped by **pitch contour**, chords need two fingers, accompaniment is scheduled sample-accurately on the audio clock
+
+
+## Recovery and regression checks
+
+Camera warmup offers **Continue with touch / keys** immediately and falls back
+for the current session after 15 seconds if the engine, camera or hand lock is
+not ready. Cancel returns to the menu. Settings shows the effective input mode;
+choose Air there to retry. Closing or leaving the page also cancels acquisition.
+A browser permission prompt may stay open until dismissed, but any stream it
+grants after cancellation is stopped rather than attached to the game.
+
+Hidden tabs pause both count-in and play. Resume first checks audio readiness;
+if recovery fails, the game stays paused and offers another Resume attempt.
+Preview changes and song startup cancel the preview's scheduled voices.
+
+Run dependency-free regression tests with Node 22 or newer:
+
+```sh
+node --test
+```
+
+The tests exercise real modules with controlled media, audio and clock fakes.
+They cover late camera grants, cancellation during video startup, failures,
+timeouts, overlapping starts, preview cancellation and audio resume retries.
+Physical camera indicators, audible quality and phone touch behavior still
+need device checks. Source tests do not establish deployed behavior.

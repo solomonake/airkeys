@@ -22,6 +22,9 @@ export class Game {
     this._lastGhost = 0;
     this._lastMissSnd = 0;
     this._bound = false;
+    this._resumeToken = 0;
+    this._resuming = null;
+    this._songAudio = [];
     window.addEventListener('resize', () => this.onResize());
   }
 
@@ -74,12 +77,19 @@ export class Game {
       }
     });
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && this.state === 'play') this.pause('hidden');
+      if (document.hidden) {
+        ++this._resumeToken;
+        this._resuming = null;
+        this.pause('hidden');
+      }
     });
   }
 
   // ── lifecycle ─────────────────────────────────────────────────────
-  async startSong(song) {
+  startSong(song) {
+    ++this._resumeToken;
+    this._resuming = null;
+    this.stopSongAudio();
     this.song = song;
     this.chart = buildChart(song, settings.lanes || song.lanes);
     this.bindInput();
@@ -102,18 +112,29 @@ export class Game {
     this.pausedAt = 0;
 
     if (this.ui.onSongStart) this.ui.onSongStart();
-    await audio.init();
     this.t0 = audio.now + 0.1; // ctx time when songTime == -leadIn
-    // count-in ticks on the last 4 beats
-    for (let k = 4; k >= 1; k--) {
-      const at = this.t0 + this.leadIn - c.spb * k;
-      if (at > audio.now) audio.tick(at, k === 4);
-    }
     this.state = 'countin';
+    this.scheduleCountIn();
+    if (document.hidden) this.pause('hidden');
     this.startLoop();
   }
 
-  songTime() { return audio.now - this.t0 - this.leadIn; }
+  scheduleCountIn() {
+    for (let k = 4; k >= 1; k--) {
+      const at = this.t0 + this.leadIn - this.chart.spb * k;
+      if (at > audio.now) this._songAudio.push(audio.tick(at, k === 4));
+    }
+  }
+
+  stopSongAudio() {
+    for (const voice of this._songAudio) voice?.kill();
+    this._songAudio = [];
+  }
+
+  songTime() {
+    const now = this.state === 'paused' ? this.pausedAt : audio.now;
+    return now - this.t0 - this.leadIn;
+  }
   ctxTimeFor(songT) { return this.t0 + this.leadIn + songT; }
 
   startFreePlay() {
@@ -121,7 +142,6 @@ export class Game {
     this.bindInput();
     this.state = 'freeplay';
     this.onResize();
-    audio.init();
     this.startLoop();
   }
 
@@ -139,16 +159,32 @@ export class Game {
     this.prePause = this.state;
     this.state = 'paused';
     this.pausedAt = audio.now;
+    this.stopSongAudio();
     this.ui.onPause(reason);
   }
 
-  resume() {
-    if (this.state !== 'paused') return;
-    const resumeDelay = 1.0;
-    this.t0 += (audio.now - this.pausedAt) + resumeDelay;
-    audio.tick(audio.now + resumeDelay * 0.5);
-    this.state = this.prePause || 'play';
-    this.ui.onResume();
+  async resume() {
+    if (this.state !== 'paused' || this._resuming || document.hidden) return;
+    const token = ++this._resumeToken;
+    this._resuming = token;
+    try {
+      await audio.init();
+      if (token !== this._resumeToken || this.state !== 'paused' || document.hidden) return;
+      const songT = this.songTime();
+      this.t0 += (audio.now - this.pausedAt) + 1.0;
+      // Cancelled future accompaniment must be scheduled against the new clock.
+      const nextBass = this.chart.bass.findIndex(b => b.t >= songT);
+      this.bassIdx = nextBass < 0 ? this.chart.bass.length : nextBass;
+      this.activeGold = this.activeGold.filter(b => b.t < songT);
+      this._songAudio.push(audio.tick(audio.now + 0.5));
+      this.state = this.prePause || 'play';
+      if (this.state === 'countin') this.scheduleCountIn();
+      this.ui.onResume();
+    } catch (_) {
+      if (token === this._resumeToken && this.state === 'paused') this.ui.onResumeError?.();
+    } finally {
+      if (this._resuming === token) this._resuming = null;
+    }
   }
   togglePause() {
     if (this.state === 'paused') this.resume();
@@ -156,6 +192,9 @@ export class Game {
   }
 
   quit() {
+    ++this._resumeToken;
+    this._resuming = null;
+    this.stopSongAudio();
     this.state = 'idle';
     this.stopLoop();
   }
@@ -280,7 +319,7 @@ export class Game {
       while (this.bassIdx < c.bass.length && c.bass[this.bassIdx].t - this.approach <= t) {
         const ev = c.bass[this.bassIdx++];
         const quiet = this.song.accompanimentQuiet ? 0.35 : 0.55;
-        audio.pad(ev.midi, quiet, this.ctxTimeFor(ev.t), ev.dur);
+        this._songAudio.push(audio.pad(ev.midi, quiet, this.ctxTimeFor(ev.t), ev.dur));
         const x = this.keyXForMidi(ev.midi);
         this.activeGold.push({ ...ev, x, landed: false });
       }
@@ -347,6 +386,7 @@ export class Game {
   }
 
   finish() {
+    this.stopSongAudio();
     const acc = this.acc();
     const grade = acc >= 0.96 ? 'S' : acc >= 0.9 ? 'A' : acc >= 0.78 ? 'B' : acc >= 0.6 ? 'C' : 'D';
     const result = {
