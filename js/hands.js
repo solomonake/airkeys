@@ -85,9 +85,20 @@ export class Hands {
     this.zoneBottom = 0;
     this._raf = null;
     this._lastVideoTime = -1;
+    this._cameraRequest = 0;
+    this._pendingStreams = new Set();
+    this._initPromise = null;
   }
 
-  async init() {
+  init() {
+    if (this.ready) return Promise.resolve();
+    if (!this._initPromise) {
+      this._initPromise = this.initEngine().finally(() => { this._initPromise = null; });
+    }
+    return this._initPromise;
+  }
+
+  async initEngine() {
     // vendored assets live at /vendor/mediapipe — resolve from this module's URL
     const local = new URL('../vendor/mediapipe', import.meta.url).href;
     let visionModule, wasmBase, modelPath;
@@ -117,17 +128,42 @@ export class Hands {
     this.ready = true;
   }
 
-  async openCamera() {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 30 }, facingMode: 'user' },
-      audio: false,
-    });
-    const v = document.createElement('video');
-    v.srcObject = stream;
-    v.muted = true; v.playsInline = true;
-    await v.play();
-    this.video = v;
-    return v;
+  async openCamera({ signal } = {}) {
+    this.closeCamera();
+    const request = this._cameraRequest;
+    let stream, video;
+    const stop = () => {
+      if (stream) for (const track of stream.getTracks()) track.stop();
+      if (video) video.srcObject = null;
+    };
+    const checkCurrent = () => {
+      if (signal?.aborted || request !== this._cameraRequest) {
+        throw new DOMException('Camera request cancelled', 'AbortError');
+      }
+    };
+    signal?.addEventListener('abort', stop, { once: true });
+    try {
+      checkCurrent();
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 30 }, facingMode: 'user' },
+        audio: false,
+      });
+      checkCurrent(); // a cancelled permission prompt can still resolve later
+      this._pendingStreams.add(stream);
+      video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true; video.playsInline = true;
+      await video.play();
+      checkCurrent();
+      this.video = video;
+      return video;
+    } catch (err) {
+      stop();
+      throw err;
+    } finally {
+      signal?.removeEventListener('abort', stop);
+      this._pendingStreams.delete(stream);
+    }
   }
 
   // canvas cover-fit mapping (mirrored)
@@ -226,12 +262,27 @@ export class Hands {
   }
 
   closeCamera() {
+    ++this._cameraRequest; // invalidates acquisition even before a stream exists
     this.stop();
-    if (this.video && this.video.srcObject) {
-      for (const tr of this.video.srcObject.getTracks()) tr.stop();
+    for (const stream of this._pendingStreams) {
+      for (const track of stream.getTracks()) track.stop();
+    }
+    this._pendingStreams.clear();
+    if (this.video) {
+      if (this.video.srcObject) {
+        for (const track of this.video.srcObject.getTracks()) track.stop();
+      }
+      this.video.srcObject = null;
     }
     this.video = null;
     this.tracking = false;
+    this.lastSeen = 0;
+    this._lastVideoTime = -1;
+    for (const finger of this.fingers.values()) {
+      finger.lost();
+      finger.armed = true;
+      finger.inZone = false;
+    }
   }
 }
 

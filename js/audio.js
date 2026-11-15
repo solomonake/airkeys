@@ -51,7 +51,24 @@ class Audio {
     return this.resume();
   }
 
-  resume() { return this.ctx && this.ctx.state !== 'running' ? this.ctx.resume() : Promise.resolve(); }
+  async resume() {
+    if (!this.ctx) throw new Error('Audio has not been initialized');
+    if (this.ctx.state !== 'running') await this.ctx.resume();
+    if (this.ctx.state !== 'running') throw new Error('Audio is still suspended');
+  }
+
+  // Stop both future sources and sounding voices, including their output path.
+  cancellable(sources, outputs) {
+    let stopped = false;
+    return { kill: (at = this.now) => {
+      if (stopped) return;
+      stopped = true;
+      for (const source of sources) {
+        try { source.stop(at); } catch (_) { /* source already ended */ }
+      }
+      for (const output of outputs) output.disconnect();
+    } };
+  }
   get now() { return this.ctx ? this.ctx.currentTime : 0; }
 
   makeImpulse(seconds, decay) {
@@ -148,12 +165,7 @@ class Audio {
     n.connect(nf); nf.connect(ng); ng.connect(this.master);
     n.start(t); n.stop(t + 0.05);
 
-    const voice = {
-      kill: (at) => {
-        env.gain.cancelScheduledValues(at);
-        env.gain.setTargetAtTime(0.0001, at, 0.05);
-      },
-    };
+    const voice = this.cancellable([...oscs, n], [out, ng]);
     this.voices.push(voice);
     const drop = () => {
       const i = this.voices.indexOf(voice);
@@ -180,13 +192,16 @@ class Audio {
     lp.frequency.value = Math.min(2400, f * 4);
     env.connect(lp); lp.connect(this.master);
     const stopAt = t + Math.max(0.4, dur) + 1.4;
+    const sources = [];
     for (const [mult, type, g] of [[1, 'triangle', 1], [0.5, 'sine', 0.5], [2.0015, 'sine', 0.12]]) {
       const o = ctx.createOscillator();
       o.type = type; o.frequency.value = f * mult;
       const gg = ctx.createGain(); gg.gain.value = g;
       o.connect(gg); gg.connect(env);
       o.start(t); o.stop(stopAt);
+      sources.push(o);
     }
+    return this.cancellable(sources, [env]);
   }
 
   // dull thud for a missed tile
@@ -233,6 +248,7 @@ class Audio {
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
     o.connect(g); g.connect(this.master);
     o.start(t); o.stop(t + 0.1);
+    return this.cancellable([o], [g]);
   }
 
   uiClick() {

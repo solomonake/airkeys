@@ -18,6 +18,10 @@ const JUDGE_LABEL = { perfect: 'PERFECT', great: 'GREAT', good: 'GOOD', miss: 'M
 export class UI {
   constructor() {
     this.onPlaySong = null;   // set by main.js
+    this.onExit = null;
+    this.onWarmupTouch = null;
+    this._previewToken = 0;
+    this._previewVoices = [];
     this.onFreePlay = null;
     this.game = null;
     this.genre = 'All';
@@ -30,7 +34,7 @@ export class UI {
     this.buildSongGrid();
     this.buildSettings();
 
-    $('#btn-freeplay').addEventListener('click', () => { audio.init(); this.onFreePlay(); });
+    $('#btn-freeplay').addEventListener('click', () => this.onFreePlay());
     $('#btn-settings').addEventListener('click', () => this.showSettings(true));
     $('#btn-howto').addEventListener('click', () => $('#howto').classList.remove('hidden'));
     $('#howto-close').addEventListener('click', () => $('#howto').classList.add('hidden'));
@@ -49,11 +53,14 @@ export class UI {
       this.onPlaySong(next, true);
     });
     $('#res-menu').addEventListener('click', () => this.exitToMenu());
+    $('#warmup-touch').addEventListener('click', () => this.onWarmupTouch?.());
     $('#warmup-cancel').addEventListener('click', () => this.exitToMenu());
     $('#free-exit').addEventListener('click', () => this.exitToMenu());
   }
 
   exitToMenu() {
+    this.onExit?.();
+    this.stopPreview();
     this.game.quit();
     hands.closeCamera(); // privacy: camera light goes off in the menu
     this.hidePause();
@@ -104,22 +111,37 @@ export class UI {
   }
 
   async preview(song) {
-    await audio.init();
     this.stopPreview();
-    const chart = buildChart(song, song.lanes);
-    const t0 = audio.now + 0.05;
-    const horizon = Math.min(4, chart.length);
-    for (const tile of chart.tiles) {
-      if (tile.t > horizon) break;
-      audio.piano(tile.midi, 0.5, t0 + tile.t, tile.dur);
+    const token = this._previewToken;
+    try {
+      await audio.init();
+      if (token !== this._previewToken) return;
+      const chart = buildChart(song, song.lanes);
+      const t0 = audio.now + 0.05;
+      const horizon = Math.min(4, chart.length);
+      for (const tile of chart.tiles) {
+        if (tile.t >= horizon) break;
+        this._previewVoices.push(audio.piano(tile.midi, 0.5, t0 + tile.t, tile.dur));
+      }
+      for (const b of chart.bass) {
+        if (b.t >= horizon) break;
+        this._previewVoices.push(audio.pad(b.midi, 0.4, t0 + b.t, b.dur));
+      }
+      this._previewTimer = setTimeout(() => this.stopPreview(), (horizon + 0.05) * 1000);
+    } catch (_) {
+      if (token !== this._previewToken) return;
+      this.stopPreview();
+      this.toast('Audio could not start. Press Preview to retry.', 5000);
     }
-    for (const b of chart.bass) {
-      if (b.t > horizon) break;
-      audio.pad(b.midi, 0.4, t0 + b.t, b.dur);
-    }
-    this._previewTimer = setTimeout(() => (this._previewTimer = null), horizon * 1000);
   }
-  stopPreview() { if (this._previewTimer) { clearTimeout(this._previewTimer); this._previewTimer = null; } }
+
+  stopPreview() {
+    ++this._previewToken; // also invalidates a preview still awaiting audio init
+    clearTimeout(this._previewTimer);
+    this._previewTimer = null;
+    for (const voice of this._previewVoices) voice?.kill();
+    this._previewVoices = [];
+  }
 
   // ── screens ───────────────────────────────────────────────────────
   showScreen(name) {
@@ -133,6 +155,7 @@ export class UI {
 
   showFreePlay() {
     this.showScreen('game');
+    $('#free-note').textContent = '';
     $('#hud').classList.add('hidden');
     $('#free-hud').classList.remove('hidden');
   }
@@ -192,6 +215,9 @@ export class UI {
           : '';
       },
       onResume: () => this.hidePause(),
+      onResumeError: () => {
+        $('#pause-reason').textContent = 'Audio could not resume. Press Resume to retry.';
+      },
       onResults: (song, res) => this.showResults(song, res),
       onFreeNote: (name) => {
         const n = $('#free-note');
